@@ -61,7 +61,7 @@ const string MY_ADS = "distancescan";
 const string CHECK = "check";
 
 const int BINS_NEIGHBOR = 10;
-const double MIN_DISTANCE = 0.01;
+const double MIN_DISTANCE = 0.1;
 //用作计时
 const int WHOLE = 0;
 const int SCAN_TIME = 1;
