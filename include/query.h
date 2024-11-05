@@ -283,6 +283,12 @@ vector<vector<int>> query() {
         set_result(WHOLE);
         dataOutput();
     }
+    // End timing and calculate duration
+    auto end_time = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - result.startTime).count();
+
+    // Print the timing to the terminal
+    std::cout << "Query took " << duration << " milliseconds." << std::endl;
     serialize_clusters(cluster_result);
     save_clusters(graph.clusterID);
     return cluster_result;
