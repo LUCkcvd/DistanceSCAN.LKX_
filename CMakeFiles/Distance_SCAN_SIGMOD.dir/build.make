@@ -210,6 +210,8 @@ Distance_SCAN_SIGMOD: /usr/lib/aarch64-linux-gnu/libboost_system.so
 Distance_SCAN_SIGMOD: /usr/lib/aarch64-linux-gnu/libboost_date_time.so
 Distance_SCAN_SIGMOD: /usr/lib/aarch64-linux-gnu/libboost_program_options.so
 Distance_SCAN_SIGMOD: /usr/lib/aarch64-linux-gnu/libboost_serialization.so
+Distance_SCAN_SIGMOD: /usr/lib/gcc/aarch64-linux-gnu/14/libgomp.so
+Distance_SCAN_SIGMOD: /usr/lib/aarch64-linux-gnu/libpthread.a
 Distance_SCAN_SIGMOD: CMakeFiles/Distance_SCAN_SIGMOD.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/parallels/Desktop/ClusteringCode/DistanceSCAN.LKX_/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Linking CXX executable Distance_SCAN_SIGMOD"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/Distance_SCAN_SIGMOD.dir/link.txt --verbose=$(VERBOSE)

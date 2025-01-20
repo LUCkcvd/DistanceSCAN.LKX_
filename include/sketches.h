@@ -3,13 +3,53 @@
 #include "binary_tree.h"
 #include "graph.h"
 #include "fhq_treap.h"
+#include <chrono>
+#include <atomic>
+
+// Progress tracking structure
+struct ConstructionProgress {
+    std::atomic<size_t> nodes_processed{0};
+    std::atomic<size_t> edges_processed{0};
+    std::atomic<size_t> current_batch_edges{0};
+    std::chrono::steady_clock::time_point start_time;
+    std::atomic<double> last_memory_usage{0.0};
+    std::atomic<double> peak_memory_usage{0.0};
+    
+    void reset() {
+        nodes_processed = 0;
+        edges_processed = 0;
+        current_batch_edges = 0;
+        start_time = std::chrono::steady_clock::now();
+        last_memory_usage = 0.0;
+        peak_memory_usage = 0.0;
+    }
+};
 
 class SKETCHES {
+private:
+    // Construction parameters
+    static constexpr int BATCH_SIZE = 64;  // Process this many nodes at once
+    static constexpr int HISTOGRAM_CHUNK_SIZE = 1000;  // Save histogram after this many nodes
+    static constexpr int PROGRESS_UPDATE_NODES = 1000; // Update progress after this many nodes
+    
+    ConstructionProgress progress;
+    
+    // Memory monitoring
+    void update_memory_stats();
+    
+    // Progress reporting
+    void report_progress(bool force = false);
+    
+public:
 
 public:
-    unsigned long long P = 4294967291;
+    static constexpr unsigned long long P = 4294967291;
 
     vector<int> key2value, value2key;
+    
+    // Construction stats
+    double total_construction_time = 0.0;
+    double peak_memory_mb = 0.0;
 
     vector<double> neis_in_dis;
     vector<int> neis_in_dis_lb, neis_in_dis_ub;

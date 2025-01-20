@@ -1,0 +1,6 @@
+dblp	algo:distancescan	epsilon: 0.200000	mu: 5	distance: 1.400000	max_distance: 1.400000	hash_k: 65536	whole_time_usage: 1.52s	total_mem_usage: 517.06MB	total_time_usage: 1.52s	sketches: 1.521441	construct_sketch_time: 1.263160	compute_all_botk_time: 0.085361	save_all_botk_time: 0.247683	update_histogram_time: 0.404733	
+
+dblp	algo:distancescan	epsilon: 0.200000	mu: 5	distance: 1.400000	max_distance: 1.400000	hash_k: 65536	whole_time_usage: 1.64s	total_mem_usage: 517.06MB	total_time_usage: 1.64s	sketches: 1.636805	construct_sketch_time: 1.238788	compute_all_botk_time: 0.084561	save_all_botk_time: 0.240181	update_histogram_time: 0.400202	
+
+dblp	algo:distancescan	epsilon: 0.200000	mu: 5	distance: 1.400000	max_distance: 1.400000	hash_k: 65536	whole_time_usage: 1450.32s	total_mem_usage: 246.79MB	total_time_usage: 1450.32s	sketches: 1450.322085	construct_sketch_time: 1450.124184	compute_all_botk_time: 0.179175	save_all_botk_time: 1.814141	update_histogram_time: 0.478346	
+

@@ -6,5 +6,5 @@ CXX_DEFINES =
 
 CXX_INCLUDES = -I/home/parallels/Desktop/ClusteringCode/DistanceSCAN.LKX_/include
 
-CXX_FLAGS = -g -std=gnu++14
+CXX_FLAGS =  -O3 -fopenmp -Wall -Wextra -fopenmp -fopenmp -g -g -O0 -std=c++17 -g -fopenmp
 

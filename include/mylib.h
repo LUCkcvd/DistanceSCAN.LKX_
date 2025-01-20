@@ -3,6 +3,18 @@
 
 //#define _DEBUG_
 #include <iostream>
+#include <iomanip>
+#include <string>
+
+using namespace std;
+
+// Helper function to format memory size
+inline string format_memory_usage(long long bytes) {
+    if (bytes < 1024) return to_string(bytes) + " B";
+    if (bytes < 1024*1024) return to_string(bytes/1024) + " KB";
+    if (bytes < 1024*1024*1024) return to_string(bytes/(1024*1024)) + " MB";
+    return to_string(bytes/(1024*1024*1024)) + " GB";
+}
 #include <set>
 #include <list>
 #include <sstream>
