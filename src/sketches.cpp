@@ -1,4 +1,4 @@
-#include <sstream>
+
 #include "sketches.h"
 
 vector<unsigned long long> SKETCHES::pick_random_coffs(int k, const unsigned long long &P) {
@@ -46,10 +46,8 @@ void SKETCHES::init_hash_table() {
 
 void SKETCHES::construct_sketches() {
     Timer timer(CONSTRUCT_SKETCH_TIME);
+    // init
     INFO("constructing sketches...");
-
-    // Start timing
-    auto start_time = std::chrono::steady_clock::now();
 
     string prefix = "dmax_" + to_str(config.max_distance) + "_k_" + to_string(config.hash_k);
     string idx;
@@ -64,12 +62,15 @@ void SKETCHES::construct_sketches() {
 
     int num_bins = get_bin_id(config.max_distance, false) + 1;
     histogram = vector<vector<int>>(graph.n, vector<int>(num_bins));
+    //ads_bot = vector<Treap>(graph.n, Treap());
     vector<idpair> dis_source_vec = vector<idpair>(graph.n, make_pair(-1, -1));
-
-    int total_nodes = graph.n;
-    int report_interval = 100; // Adjust this value as needed
-
-    for (int source_nid = 0; source_nid < total_nodes; ++source_nid) {
+    for (int source_nid = 0; source_nid < graph.n; ++source_nid) {
+#ifdef _DEBUG_
+        if (source_nid % 100 == 99) {
+            INFO(source_nid);
+        }
+        int counter =0;
+#endif
         Treap treap;
         ADS ads;
         if (config.algo == BOTK_SCAN) {
@@ -84,7 +85,7 @@ void SKETCHES::construct_sketches() {
         while (!pq.empty()) {
             auto cur_node = pq.top();
             pq.pop();
-            if (cmp_double(cur_node.second, dis_source_vec[cur_node.first].second) == 1) continue;
+            if (cmp_double(cur_node.second, dis_source_vec[cur_node.first].second) == 1)continue;
 
             update_histogram(source_nid, cur_node.second);
             if (config.algo == BOTK_SCAN) {
@@ -92,8 +93,13 @@ void SKETCHES::construct_sketches() {
             } else if (config.algo == MY_ADS) {
                 ads.insert_botk(key2value[cur_node.first], cur_node.second);
             }
-
-            for (int nei_id : graph.adj_list[cur_node.first]) {
+            //ads_bot[source_nid].insert_botk(key2value[cur_node.first], cur_node.second);
+#ifdef _DEBUG_
+            assert(dis_source_vec[cur_node.first].first == source_nid);
+            assert(cmp_double(cur_node.second, dis_source_vec[cur_node.first].second) == 0);
+            counter++;
+#endif
+            for (int nei_id: graph.adj_list[cur_node.first]) {
                 double nei_dis = cur_node.second + graph.edge_weight[cur_node.first][nei_id];
                 if (cmp_double(nei_dis, config.max_distance) < 1) {
                     if (dis_source_vec[nei_id].first != source_nid ||
@@ -120,22 +126,6 @@ void SKETCHES::construct_sketches() {
             }
         }
 
-        // Estimate remaining time at intervals
-        if (source_nid % report_interval == 0 && source_nid > 0) {
-            auto current_time = std::chrono::steady_clock::now();
-            std::chrono::duration<double> elapsed = current_time - start_time;
-            double average_time_per_node = elapsed.count() / source_nid;
-            int nodes_remaining = total_nodes - source_nid;
-            double estimated_remaining_time = nodes_remaining * average_time_per_node;
-
-            // Construct the message using stringstream
-            std::ostringstream oss;
-            oss << "Processed " << source_nid << " out of " << total_nodes << " nodes. "
-                << "Estimated time remaining: " << estimated_remaining_time << " seconds.";
-
-            // Display the message
-            INFO(oss.str());
-        }
     }
 }
 

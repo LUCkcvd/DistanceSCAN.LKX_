@@ -399,15 +399,9 @@ void ClusterAlgos::traverse_single_node_botk(int u, vector<int> &parent, vector<
     }
 }
 
-void ClusterAlgos::traverse_single_node_botk_sort(int u, vector<int> &parent, vector<int> &rank, double bin_length, vector<vector<idpair>> &node_buckets) {
+void ClusterAlgos::traverse_single_node_botk_sort(int u, vector<int> &parent, vector<int> &rank,double bin_length,  vector<vector<idpair>> & node_buckets) {
     Timer timer(TRAVERSE_NODES_TIME_BOTK_SORT);
-
-    // Clear node_buckets to remove entries from previous nodes
-    for (auto &bucket : node_buckets) {
-        bucket.clear();
-    }
-
-    vector<int> bin_true_size(node_buckets.size(), 0);
+    vector<int> bin_true_size = vector<int>(node_buckets.size(), 0);
     for (int i = 0; i < sketches.bot_k_dis[u].size(); ++i) {
         int bin_id;
         if (cmp_double(sketches.bot_k_dis[u][i], 0) == 0) {
@@ -415,32 +409,23 @@ void ClusterAlgos::traverse_single_node_botk_sort(int u, vector<int> &parent, ve
         } else {
             bin_id = (sketches.bot_k_dis[u][i] - MIN_DISTANCE) / bin_length;
         }
-
-        // Ensure bin_id is within bounds
-        if (bin_id >= node_buckets.size()) {
-            bin_id = node_buckets.size() - 1;
-        }
-
         int nei = sketches.value2key[sketches.bot_k[u][i]];
         double dis = sketches.bot_k_dis[u][i];
-
-        if (node_buckets[bin_id].size() > bin_true_size[bin_id]) {
+        if(node_buckets[bin_id].size() > bin_true_size[bin_id]){
             node_buckets[bin_id][bin_true_size[bin_id]++] = make_pair(nei, dis);
-        } else {
+        }else{
             node_buckets[bin_id].emplace_back(make_pair(nei, dis));
             bin_true_size[bin_id]++;
         }
     }
-
     for (int i = 0; i < node_buckets.size(); ++i) {
         for (int j = 0; j < bin_true_size[i]; ++j) {
             idpair item = node_buckets[i][j];
             test_edge(u, item.first, item.second, parent, rank, true);
-            if (graph.is_core[u] != -1) break;
+            if (graph.is_core[u] != -1)break;
         }
     }
 }
-
 
 void ClusterAlgos::traverse_single_node_dijkstra(int u, vector<idpair> &dis_source_vec, vector<int> &parent,
                                                  vector<int> &rank) {

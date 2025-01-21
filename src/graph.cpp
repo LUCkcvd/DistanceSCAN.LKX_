@@ -61,41 +61,18 @@ void Graph::init(const string &graph_path) {
         } else {
             //graph_file += "uniform_weighted_graph.txt";
             graph_file += "jac_graph.txt";
-            // graph_file += "refined_distance_graph.txt"; //added for our experimental code
         }
     }
 
     FILE *fin = fopen(graph_file.c_str(), "r");
     if (weighted) {
-    int t1, t2;
-    double w;
-    while (fscanf(fin, "%d%d%lf", &t1, &t2, &w) != EOF) {
-        if (t1 == t2) continue;
-
-        // Ensure that adj_list is large enough
-        if (t1 >= adj_list.size()) {
-            adj_list.resize(t1 + 1);
+        int t1, t2;
+        double w;
+        while (fscanf(fin, "%d%d%lf", &t1, &t2, &w) != EOF) {
+            if (t1 == t2)continue;
+            adj_list[t1].push_back(t2);
+            edge_weight[t1][t2] = w;
         }
-        adj_list[t1].push_back(t2);
-
-        // Ensure that edge_weight is large enough
-        if (t1 >= edge_weight.size()) {
-            edge_weight.resize(t1 + 1);
-        }
-
-        // Access edge_weight[t1], and check bucket counts
-        auto& inner_map = edge_weight[t1];
-
-        // rehash the inner unordered_map if its bucket_count is zero
-        if (inner_map.bucket_count() == 0) {
-            std::cout << "edge_weight[" << t1 << "].bucket_count() is zero, rehashing to 8" << std::endl;
-            inner_map.rehash(8); // Rehash to allocate buckets
-        }
-
-        // Assign the weight to the edge
-        inner_map[t2] = w;
-    }
-        
     } else {
         int t1, t2;
         while (fscanf(fin, "%d%d", &t1, &t2) != EOF) {
@@ -151,7 +128,6 @@ Graph::Graph(const string &graph_path) {
         } else {
             //graph_file += "uniform_weighted_graph.txt";
             graph_file += "jac_graph.txt";
-            // graph_file += "refined_distance_graph.txt"; //added for our experimental code
         }
     }
 
