@@ -64,9 +64,9 @@ DistanceSCAN is an efficient algorithm for distance-based structural graph clust
      - Operation timing measurements
      - Efficiency metrics collection
 
-## Improvements Over Original Implementation
+## Changelog
 
-### Enhanced Sketch Construction
+### Enhanced Sketch Construction (operation construct_sketches)
 The sketch construction operation has been significantly improved with several new techniques and optimizations:
 
 1. **Memory Management Enhancements**
@@ -139,14 +139,6 @@ Example:
 ```sh
 $ ./Distance_SCAN_SIGMOD --operation construct_sketches --dataset ego-facebook --algo distancescan -k 16 -d 0.4 
 ```
-
-Note: The sketch construction process includes several optimizations:
-- Batch processing of nodes to control memory usage
-- Automatic memory cleanup after each batch
-- Progress tracking with edge processing rate
-- Peak memory usage monitoring
-- OpenMP parallel processing support
-- Efficient disk I/O with chunked storage
 
 ### 2. Querying Clusters
 
