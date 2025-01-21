@@ -1,8 +1,16 @@
 #ifndef WEIGHTED_SCAN_SKETCHES_H
 #define WEIGHTED_SCAN_SKETCHES_H
+
 #include "binary_tree.h"
 #include "graph.h"
 #include "fhq_treap.h"
+#include <omp.h>
+#include <mutex>
+#include <queue>
+#include <algorithm>
+
+// Constants for optimization
+const int BATCH_SIZE = 1024; // Batch size for parallel processing
 
 class SKETCHES {
 

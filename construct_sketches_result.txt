@@ -1,0 +1,2 @@
+dblp	algo:distancescan	epsilon: 0.200000	mu: 5	distance: 1.400000	max_distance: 1.400000	hash_k: 65536	whole_time_usage: 104.61s	total_mem_usage: 723.06MB	total_time_usage: 104.61s	sketches: 104.606630	construct_sketch_time: 104.309270	compute_all_botk_time: 0.125393	save_all_botk_time: 1.269677	update_histogram_time: 0.000000	
+

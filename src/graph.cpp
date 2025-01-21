@@ -1,20 +1,134 @@
 
 #include "../include/graph.h"
+#include <sys/resource.h>
+#include <cstdlib>
+#include <chrono>
+#include <thread>
+#include <algorithm>
 
 Graph graph;
 
+bool Graph::map_file(const string& filename) {
+    if (mmap_fd >= 0) {
+        unmap_file();
+    }
+    
+    mmap_fd = open(filename.c_str(), O_RDONLY);
+    if (mmap_fd == -1) {
+        return false;
+    }
+    
+    struct stat sb;
+    if (fstat(mmap_fd, &sb) == -1) {
+        close(mmap_fd);
+        mmap_fd = -1;
+        return false;
+    }
+    
+    mmap_size = sb.st_size;
+    mmap_data = mmap(nullptr, mmap_size, PROT_READ, MAP_PRIVATE, mmap_fd, 0);
+    
+    if (mmap_data == MAP_FAILED) {
+        close(mmap_fd);
+        mmap_fd = -1;
+        mmap_data = nullptr;
+        return false;
+    }
+    
+    return true;
+}
+
+void Graph::unmap_file() {
+    if (mmap_data) {
+        munmap(mmap_data, mmap_size);
+        mmap_data = nullptr;
+    }
+    if (mmap_fd >= 0) {
+        close(mmap_fd);
+        mmap_fd = -1;
+    }
+    mmap_size = 0;
+}
+
+bool Graph::check_and_update_memory(size_t additional_bytes) {
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+    size_t current_mem = static_cast<size_t>(usage.ru_maxrss) * 1024ULL;
+    
+    if (current_mem + additional_bytes > MAX_MEMORY_BYTES) {
+        stringstream ss;
+        ss << "Memory limit reached: " << (current_mem / (1024.0 * 1024 * 1024)) 
+           << "GB used, cannot allocate additional " 
+           << (additional_bytes / (1024.0 * 1024 * 1024)) << "GB";
+        INFO(ss.str());
+        
+        release_memory();
+        
+        getrusage(RUSAGE_SELF, &usage);
+        current_mem = static_cast<size_t>(usage.ru_maxrss) * 1024ULL;
+        
+        if (current_mem + additional_bytes > MAX_MEMORY_BYTES) {
+            return false;
+        }
+    }
+    
+    current_memory_usage = current_mem;
+    return true;
+}
+
+void Graph::track_memory_usage() {
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+    current_memory_usage = static_cast<size_t>(usage.ru_maxrss) * 1024ULL;
+    
+    if (current_memory_usage > MAX_MEMORY_BYTES) {
+        stringstream ss;
+        ss << "Memory usage exceeds limit: " 
+           << (current_memory_usage / (1024.0 * 1024 * 1024)) << "GB";
+        INFO(ss.str());
+        release_memory();
+    }
+}
+
+void Graph::release_memory() {
+    // Clear lazy-loaded matrices
+    path_weight.clear();
+    similarity_matrix.clear();
+    jac_res.clear();
+    
+    // Reset memory pool
+    mem_pool.reset();
+    
+    // Clear temporary working sets
+    d_neighbors.clear();
+    d_neighbors.shrink_to_fit();
+    
+    // Clear CSR buffers if possible
+    if (m == 0) {
+        csr_graph.clear();
+    }
+    
+    // Force garbage collection
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
 void Graph::init_d_neighbors() {
     Timer timer(D_NEIGHBOR_TIME);
-    path_weight = vector<unordered_map<int, double >>(n, unordered_map<int, double>{});
-    d_neighbors = vector<vector<int >>(n, vector<int>());
+    
+    // Initialize data structures
+    path_weight.init(n);
+    d_neighbors.clear();
+    d_neighbors.resize(n);
+    
+    // Process each vertex
     for (int n_id = 0; n_id < n; ++n_id) {
-        d_neighbors[n_id].emplace_back(n_id);
+        // Initialize with self-loop
+        d_neighbors[n_id].push_back(n_id);
+        
+        // Setup priority queue for Dijkstra's algorithm
         priority_queue<idpair, vector<idpair>, cmp_idpair> pq;
         pq.push(make_pair(n_id, 0));
         set_path_weight(n_id, n_id, 0);
-        for (int nei_id: d_neighbors[n_id]) {
-            pq.push(make_pair(nei_id, get_path_weight(n_id, nei_id)));
-        }
         while (!pq.empty()) {
             auto cur_node = pq.top();
             pq.pop();
@@ -40,14 +154,62 @@ void Graph::init_d_neighbors() {
 }
 
 
+Graph::Graph(const string &graph_path) : adj_list(*this), edge_weight(*this) {
+    path_weight.set_graph(this);
+    similarity_matrix.set_graph(this);
+    jac_res.set_graph(this);
+    init(graph_path);
+}
+
 void Graph::init(const string &graph_path) {
     Timer timer(READ_GRAPH_TIME);
     INFO("Reading graph ...");
     this->data_folder = graph_path;
     init_nm();
-    adj_list = vector<vector<int >>(n, vector<int>());
-    edge_weight = vector<unordered_map<int, double >>(n, unordered_map<int, double>());
-    string graph_file = data_folder;// + FILESEP;
+    
+    // Calculate estimated memory for CSR format and auxiliary data
+    size_t estimated_mem = 
+        (n + 1) * sizeof(size_t) + // offsets array
+        m * sizeof(int) +          // edges array
+        (weighted ? m * sizeof(double) : 0) + // weights array
+        n * sizeof(int) * 2 +     // clusterID and is_core
+        n * sizeof(unordered_map<int, bool>); // similarity matrix
+        
+    if (!check_and_update_memory(estimated_mem)) {
+        throw runtime_error("Insufficient memory to load graph of size n=" + 
+                          to_string(n) + ", m=" + to_string(m));
+    }
+    
+    // Initialize CSR structure with minimal memory footprint
+    csr_graph.offsets.reserve(n + 1);
+    csr_graph.offsets.push_back(0);
+    csr_graph.edges.reserve(m);
+    if (weighted) {
+        csr_graph.weights.reserve(m);
+    }
+    
+    // Initialize core data structures with exact sizes
+    clusterID.resize(n, -1);
+    is_core.resize(n, -1);
+    
+    // Initialize compatibility layers with minimal initial capacity
+    adj_list.resize(n);
+    edge_weight.resize(n);
+    
+    // Initialize similarity matrix only when needed
+    if (!similarity.empty()) {
+        similarity.clear();
+    }
+    similarity.resize(n);
+    
+    // Initialize lazy matrices only when needed
+    if (config.operation == CLUSTER_VALIDATION) {
+        jac_res.init(n);
+    }
+    
+    // First pass: Count edges per node
+    vector<size_t> edge_counts(n, 0);
+    string graph_file = data_folder;
     if (directed) {
         graph_file += "graph.txt";
     } else if (config.operation == CONVERT_GRAPH) {
@@ -59,27 +221,88 @@ void Graph::init(const string &graph_path) {
         } else if (data_folder.find("LFR") != data_folder.npos || config.operation == EXPONLFR) {
             graph_file += "undirect_graph.txt";
         } else {
-            //graph_file += "uniform_weighted_graph.txt";
             graph_file += "jac_graph.txt";
         }
     }
 
     FILE *fin = fopen(graph_file.c_str(), "r");
+    if (!fin) {
+        throw runtime_error("Failed to open graph file: " + graph_file);
+    }
+
+    // First pass: Count edges and build CSR structure
     if (weighted) {
         int t1, t2;
         double w;
         while (fscanf(fin, "%d%d%lf", &t1, &t2, &w) != EOF) {
-            if (t1 == t2)continue;
-            adj_list[t1].push_back(t2);
-            edge_weight[t1][t2] = w;
+            if (t1 == t2 || t1 < 0 || t2 < 0 || t1 >= n || t2 >= n) continue;
+            edge_counts[t1]++;
+            if (!directed) {
+                edge_counts[t2]++; // Count both directions for undirected graphs
+            }
         }
     } else {
         int t1, t2;
         while (fscanf(fin, "%d%d", &t1, &t2) != EOF) {
-            if (t1 == t2)continue;
-            adj_list[t1].push_back(t2);
+            if (t1 == t2 || t1 < 0 || t2 < 0 || t1 >= n || t2 >= n) continue;
+            edge_counts[t1]++;
+            if (!directed) {
+                edge_counts[t2]++;
+            }
         }
     }
+
+    // Build CSR offsets
+    for (int i = 0; i < n; i++) {
+        csr_graph.offsets.push_back(csr_graph.offsets.back() + edge_counts[i]);
+    }
+
+    // Pre-allocate edges and weights arrays
+    csr_graph.edges.resize(csr_graph.offsets.back());
+    if (weighted) {
+        csr_graph.weights.resize(csr_graph.offsets.back(), 1.0); // Default weight 1.0
+    }
+
+    // Reset edge counts for second pass
+    vector<size_t> current_idx(n, 0);
+
+    // Second pass: Fill CSR arrays
+    fseek(fin, 0, SEEK_SET);
+    if (weighted) {
+        int t1, t2;
+        double w;
+        while (fscanf(fin, "%d%d%lf", &t1, &t2, &w) != EOF) {
+            if (t1 == t2 || t1 < 0 || t2 < 0 || t1 >= n || t2 >= n) continue;
+            
+            // Add forward edge
+            size_t idx1 = csr_graph.offsets[t1] + current_idx[t1]++;
+            csr_graph.edges[idx1] = t2;
+            csr_graph.weights[idx1] = w;
+            
+            // Add reverse edge for undirected graphs
+            if (!directed) {
+                size_t idx2 = csr_graph.offsets[t2] + current_idx[t2]++;
+                csr_graph.edges[idx2] = t1;
+                csr_graph.weights[idx2] = w;
+            }
+        }
+    } else {
+        int t1, t2;
+        while (fscanf(fin, "%d%d", &t1, &t2) != EOF) {
+            if (t1 == t2 || t1 < 0 || t2 < 0 || t1 >= n || t2 >= n) continue;
+            
+            // Add forward edge
+            size_t idx1 = csr_graph.offsets[t1] + current_idx[t1]++;
+            csr_graph.edges[idx1] = t2;
+            
+            // Add reverse edge for undirected graphs
+            if (!directed) {
+                size_t idx2 = csr_graph.offsets[t2] + current_idx[t2]++;
+                csr_graph.edges[idx2] = t1;
+            }
+        }
+    }
+    fclose(fin);
     result.n = this->n;
     result.m = this->m;
     cout << "init graph graphn: " << this->n << " m: " << this->m << endl;
@@ -108,73 +331,6 @@ void Graph::init(const string &graph_path) {
     }
 }
 
-Graph::Graph(const string &graph_path) {
-    Timer timer(READ_GRAPH_TIME);
-    INFO("Reading graph ...");
-    this->data_folder = graph_path;
-    init_nm();
-    adj_list = vector<vector<int >>(n, vector<int>());
-    edge_weight = vector<unordered_map<int, double >>(n, unordered_map<int, double>());
-    string graph_file = data_folder;// + FILESEP;
-    if (directed) {
-        graph_file += "graph.txt";
-    } else if (config.operation == CONVERT_GRAPH) {
-        graph_file += "undirect_graph.txt";
-    } else {
-        if (data_folder.find("graphs_coauthors") != data_folder.npos) {
-            graph_file += "undirect_graph2.txt";
-        } else if (data_folder.find("LFR") != data_folder.npos || config.operation == EXPONLFR) {
-            graph_file += "undirect_graph.txt";
-        } else {
-            //graph_file += "uniform_weighted_graph.txt";
-            graph_file += "jac_graph.txt";
-        }
-    }
-
-    FILE *fin = fopen(graph_file.c_str(), "r");
-    if (weighted) {
-        int t1, t2;
-        double w;
-        while (fscanf(fin, "%d%d%lf", &t1, &t2, &w) != EOF) {
-            if (t1 == t2)continue;
-            adj_list[t1].push_back(t2);
-            edge_weight[t1][t2] = w;
-        }
-    } else {
-        int t1, t2;
-        while (fscanf(fin, "%d%d", &t1, &t2) != EOF) {
-            if (t1 == t2)continue;
-            adj_list[t1].push_back(t2);
-        }
-    }
-    fclose(fin);
-    result.n = this->n;
-    result.m = this->m;
-    cout << "init graph graph n: " << this->n << " m: " << this->m << endl;
-
-    clusterID = vector<int>(n, -1);
-    is_core = vector<int>(n, -1);
-    similarity = vector<unordered_map<int, bool >>(n, unordered_map<int, bool>{});
-    if (config.algo == W_SCAN) {
-        weight_degree = vector<double>(n, 0);
-        whole_weight = 0;
-        if (config.similarityType == Config::cos) {
-            for (int i = 0; i < n; ++i) {
-                for (int nei: adj_list[i]) {
-                    weight_degree[i] += edge_weight[i][nei] * edge_weight[i][nei];
-                }
-                weight_degree[i] = sqrt(weight_degree[i] + 1);
-                whole_weight += weight_degree[i] + 1;
-            }
-        }
-    }
-    if (data_folder.find("graphs_coauthors") != data_folder.npos || data_folder.find("LFR") != data_folder.npos) {
-        reweighted(config.type);
-    }
-    if (config.operation == CLUSTER_VALIDATION) {
-        jac_res = vector<unordered_map<int, double >>(n, unordered_map<int, double>{});
-    }
-}
 
 void Graph::init_nm() {
     string attribute_file = data_folder + "attribute.txt";
@@ -259,46 +415,218 @@ unordered_map<int, double> Graph::compute_path_weight(int u, double dis_thre) {
 }
 
 void Graph::edge_del(int u, int v) {
+    // Check memory usage before operation
+    if (!check_and_update_memory(sizeof(size_t) * 2)) {
+        throw runtime_error("Insufficient memory for edge deletion");
+    }
+    
     m--;
-    for (int k = 0; k < 2; ++k) {
-        for (int i = adj_list[u].size() - 1; i >= 0; --i) {
-            if (adj_list[u][i] == v) {
-                swap(adj_list[u][i], adj_list[u].back());
-                adj_list[u].pop_back();
-                break;
+    
+    // Find and mark edge in CSR structure
+    {
+        size_t start_u = csr_graph.offsets[u];
+        size_t end_u = csr_graph.offsets[u + 1];
+        bool found = false;
+        for (size_t i = start_u; i < end_u && !found; i++) {
+            if (csr_graph.edges[i] == v) {
+                // Mark edge as deleted by setting weight to 0
+                if (weighted) {
+                    csr_graph.weights[i] = 0.0;
+                }
+                found = true;
             }
         }
-        swap(u, v);
-    }
-    for (int k = 0; k < 2; ++k) {
-        if (edge_weight[u].find(v) != edge_weight[u].end()) {
-            edge_weight[u].erase(v);
+        
+        if (!directed && found) {
+            size_t start_v = csr_graph.offsets[v];
+            size_t end_v = csr_graph.offsets[v + 1];
+            for (size_t i = start_v; i < end_v; i++) {
+                if (csr_graph.edges[i] == u) {
+                    if (weighted) {
+                        csr_graph.weights[i] = 0.0;
+                    }
+                    break;
+                }
+            }
         }
-        swap(u, v);
     }
-    if (similarity.empty())return;
-    if (u < v) {
-        if (similarity[u].find(v) != similarity[u].end()) {
+    
+    // Update compatibility layers efficiently
+    {
+        // Remove edge from adjacency lists
+        auto& adj_u = adj_list[u];
+        auto it_u = find(adj_u.begin(), adj_u.end(), v);
+        if (it_u != adj_u.end()) {
+            *it_u = adj_u.back();
+            adj_u.pop_back();
+        }
+        
+        if (!directed) {
+            auto& adj_v = adj_list[v];
+            auto it_v = find(adj_v.begin(), adj_v.end(), u);
+            if (it_v != adj_v.end()) {
+                *it_v = adj_v.back();
+                adj_v.pop_back();
+            }
+        }
+        
+        // Remove edge weights
+        edge_weight[u].erase(v);
+        if (!directed) {
+            edge_weight[v].erase(u);
+        }
+    }
+    
+    // Update similarity if needed
+    if (!similarity.empty()) {
+        if (u < v) {
             similarity[u].erase(v);
-        }
-    } else {
-        if (similarity[v].find(u) != similarity[v].end()) {
+        } else {
             similarity[v].erase(u);
         }
     }
+    
+    // Track memory usage after operation
+    track_memory_usage();
 }
 
 void Graph::edge_ins(int u, int v, double w) {
+    // Calculate memory needed for new edge
+    size_t additional_mem = sizeof(int) * 2;  // For CSR edges
+    if (weighted) {
+        additional_mem += sizeof(double) * 2;  // For weights
+    }
+    if (!directed) {
+        additional_mem *= 2;  // Double for undirected edges
+    }
+    
+    // Check memory availability
+    if (!check_and_update_memory(additional_mem)) {
+        throw runtime_error("Insufficient memory for edge insertion");
+    }
+    
     m++;
-    adj_list[u].emplace_back(v);
-    adj_list[v].emplace_back(u);
-    edge_weight[u][v] = w;
-    edge_weight[v][u] = w;
+    
+    // Update CSR structure efficiently
+    {
+        // Pre-allocate space to avoid multiple reallocations
+        size_t new_size = csr_graph.edges.size() + (directed ? 1 : 2);
+        csr_graph.edges.reserve(new_size);
+        if (weighted) {
+            csr_graph.weights.reserve(new_size);
+        }
+        
+        // Insert forward edge
+        size_t idx_u = csr_graph.offsets[u + 1] - 1;
+        csr_graph.edges.insert(csr_graph.edges.begin() + idx_u, v);
+        if (weighted) {
+            csr_graph.weights.insert(csr_graph.weights.begin() + idx_u, w);
+        }
+        
+        // Insert reverse edge for undirected graphs
+        if (!directed) {
+            size_t idx_v = csr_graph.offsets[v + 1] - 1;
+            csr_graph.edges.insert(csr_graph.edges.begin() + idx_v, u);
+            if (weighted) {
+                csr_graph.weights.insert(csr_graph.weights.begin() + idx_v, w);
+            }
+        }
+        
+        // Update offsets efficiently
+        for (size_t i = u + 1; i < csr_graph.offsets.size(); i++) {
+            csr_graph.offsets[i]++;
+        }
+        if (!directed) {
+            for (size_t i = v + 1; i < csr_graph.offsets.size(); i++) {
+                csr_graph.offsets[i]++;
+            }
+        }
+    }
+    
+    // Update compatibility layers efficiently
+    {
+        // Pre-reserve space in adjacency lists
+        if (adj_list[u].capacity() == adj_list[u].size()) {
+            adj_list[u].reserve(adj_list[u].size() * 2);
+        }
+        adj_list[u].push_back(v);
+        edge_weight[u][v] = w;
+        
+        if (!directed) {
+            if (adj_list[v].capacity() == adj_list[v].size()) {
+                adj_list[v].reserve(adj_list[v].size() * 2);
+            }
+            adj_list[v].push_back(u);
+            edge_weight[v][u] = w;
+        }
+    }
+    
+    // Track memory usage after operation
+    track_memory_usage();
 }
 
 void Graph::edge_update(int u, int v, double w) {
-    edge_weight[u][v] = w;
-    edge_weight[v][u] = w;
+    // Check memory usage before operation
+    if (!check_and_update_memory(sizeof(double) * (directed ? 1 : 2))) {
+        throw runtime_error("Insufficient memory for edge update");
+    }
+    
+    // Update CSR structure efficiently
+    {
+        size_t start_u = csr_graph.offsets[u];
+        size_t end_u = csr_graph.offsets[u + 1];
+        bool found = false;
+        
+        // Use binary search if edge list is large enough
+        if (end_u - start_u > 32) {
+            auto it = lower_bound(csr_graph.edges.begin() + start_u, 
+                                csr_graph.edges.begin() + end_u, v);
+            if (it != csr_graph.edges.begin() + end_u && *it == v) {
+                csr_graph.weights[it - csr_graph.edges.begin()] = w;
+                found = true;
+            }
+        } else {
+            // Linear search for small lists
+            for (size_t i = start_u; i < end_u && !found; i++) {
+                if (csr_graph.edges[i] == v) {
+                    csr_graph.weights[i] = w;
+                    found = true;
+                }
+            }
+        }
+        
+        if (!directed && found) {
+            size_t start_v = csr_graph.offsets[v];
+            size_t end_v = csr_graph.offsets[v + 1];
+            
+            // Use same search strategy for reverse edge
+            if (end_v - start_v > 32) {
+                auto it = lower_bound(csr_graph.edges.begin() + start_v,
+                                    csr_graph.edges.begin() + end_v, u);
+                if (it != csr_graph.edges.begin() + end_v && *it == u) {
+                    csr_graph.weights[it - csr_graph.edges.begin()] = w;
+                }
+            } else {
+                for (size_t i = start_v; i < end_v; i++) {
+                    if (csr_graph.edges[i] == u) {
+                        csr_graph.weights[i] = w;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Update compatibility layer efficiently
+    {
+        edge_weight[u][v] = w;
+        if (!directed) {
+            edge_weight[v][u] = w;
+        }
+    }
+    
+    // Track memory usage after operation
+    track_memory_usage();
 }
 
 const vector<unordered_map<int, double>> &Graph::getPathWeight() const {
